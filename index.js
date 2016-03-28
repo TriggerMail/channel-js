@@ -2,11 +2,17 @@
 
 import request from 'superagent';
 
+// Statuses
+const OK = 200;
+const NO_CONTENT = 205;
+const GONE = 410;
+const FORBIDDEN = 403;
 
 let _baseConfig = {
   basePath: '/_ah/polling',
   interval: 1000,
-  requestTimeout: 10000,
+  requestTimeout: 5000,
+  retries: 5,
   timeout: 30000
 };
 
@@ -16,15 +22,18 @@ export default class Channel {
     this.basePath = config.basePath || _baseConfig.basePath;
     this.interval = config.interval || _baseConfig.interval;
     this.requestTimeout = config.requestTimeout || _baseConfig.requestTimeout;
+    this.retries = config.retries || _baseConfig.retries;
     this.timeout = config.timeout || _baseConfig.timeout;
 
     // message queue
     this.queue = [];
 
     // event handlers
-    this._onMessage = [];
-    this._onError = [];
-    this._onDisconnect = [];
+    this._handlers = {
+      onMessage: [],
+      onError: [],
+      onDisconnect: []
+    };
 
     // init polling interval function
     this.pollingInterval = setInterval(() => {this._poll()}, this.interval);
@@ -36,7 +45,7 @@ export default class Channel {
   }
 
   onMessage(handler) {
-    this._onMessage.push(handler);
+    this._handlers.onMessage.push(handler);
 
     if (this.queue.length) {
       this.queue.forEach((message) => {
@@ -48,18 +57,35 @@ export default class Channel {
   }
 
   onError(handler) {
-    this._onError.push(handler);
+    this._handlers.onError.push(handler);
   }
 
   onDisconnect(handler) {
-    this._onDisconnect.push(handler);
+    this._handlers.onDisconnect.push(handler);
   }
 
-  _onError(err) {
-    if (this._onError.length) {
-      this._onError.forEach((handler) => {
-        handler(err);
-      })
+  // close channel
+  close() {
+    this._onDisconnected();
+  }
+
+  _onError(err, res) {
+    if (res.status == GONE) {
+      return this._onDisconnected();
+    }
+
+    if (res.status == FORBIDDEN) {
+      return this._onDisconnected(err);
+    }
+
+    this._handlers.onError.forEach((handler) => {
+      handler(err);
+    });
+
+    if (!this.retries) {
+      this.retries = 1;
+    } else if (retries) {
+
     }
 
     if (!this.errorTimestamp) {
@@ -69,15 +95,20 @@ export default class Channel {
       // if first occured error is older than timeout, that means we
       // lost connection
       if ((Date.now() - this.errorTimestamp) > this.timeout) {
-        this.disconnected = true;
-        this.pollingInterval = clearInterval(this.pollingInterval);
-
-        if (this._onDisconnect.length) {
-          this._onDisconnect.forEach((handler) => {
-            handler(err);
-          });
-        }
+        this._onDisconnected(err);
       }
+    }
+  }
+
+  _onDisconnected(err) {
+    this.disconnected = true;
+    delete this.errorTimestamp;
+    this.pollingInterval = clearInterval(this.pollingInterval);
+
+    if (err) {
+      this._handlers.onDisconnect.forEach((handler) => {
+        handler(err);
+      });
     }
   }
 
@@ -90,13 +121,11 @@ export default class Channel {
           delete this.pendingRequest;
 
           if (err) {
-            this._onError(err);
+            this._onError(err, res);
           } else {
             delete this.errorTimestamp;
-            let contentLength = res.headers['Content-Length'] ||
-              res.headers['content-length'];
-            // Content-Length > 0 means that we have data on the server
-            if (contentLength && Number(contentLength) > 0) {
+            // status 200 means that channel has messages
+            if (res.status == OK) {
               this._getMessage();
             }
           }
@@ -110,15 +139,15 @@ export default class Channel {
       .timeout(this.requestTimeout)
       .end((err, res) => {
         if (err) {
-          this._onError(err);
-          console.warning('Can not get message from the server.');
-          // try again
-          this._getMessage();
+          this._onError(err, res);
         } else {
           delete this.errorTimestamp;
-          this._onMessage.forEach((handler) => {
-            handler(res.body, res);
-          });
+
+          if (res.status == OK) {
+            this._handlers.onMessage.forEach((handler) => {
+              handler(res.body, res);
+            });
+          }
         }
       });
   }

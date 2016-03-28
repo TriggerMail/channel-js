@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "build": "./node_modules/browserify/bin/cmd.js index.js -s Channel -o dist/index.js",
-    "watch": "./node_modules/watchify/bin/cmd.js example/index.js -p browserify-hmr -o example/bundle.js -dv"
+    "watch": "./node_modules/watchify/bin/cmd.js example/index.js -p browserify-hmr -o example/bundle.js -d"
   },
   "repository": {
     "type": "git",
@@ -31,8 +31,5 @@
     "browserify-hmr": "^0.3.1",
     "morgan": "^1.7.0",
     "watchify": "^3.7.0"
-  },
-  "dependencies": {
-    "superagent": "^1.8.3"
   }
 }
